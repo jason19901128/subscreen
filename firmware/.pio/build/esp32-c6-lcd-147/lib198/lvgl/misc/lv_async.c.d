@@ -1,0 +1,20 @@
+.pio/build/esp32-c6-lcd-147/lib198/lvgl/misc/lv_async.c.o: \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_async.c \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_async.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_types.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../lv_conf_internal.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../lv_conf_kconfig.h \
+ /Users/sen.jia-a2401/.platformio/packages/framework-arduinoespressif32-libs/esp32c6/qio_qspi/include/sdkconfig.h \
+ /Users/sen.jia-a2401/.platformio/packages/framework-arduinoespressif32-libs/esp32c6/include/esp_common/include/esp_attr.h \
+ include/lv_conf.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_timer_private.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_ext_data.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_timer.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../tick/lv_tick.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../tick/../lv_conf_internal.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../tick/../misc/lv_types.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/lv_ll.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../stdlib/lv_mem.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../stdlib/../lv_conf_internal.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../stdlib/lv_string.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/misc/../stdlib/../misc/lv_types.h

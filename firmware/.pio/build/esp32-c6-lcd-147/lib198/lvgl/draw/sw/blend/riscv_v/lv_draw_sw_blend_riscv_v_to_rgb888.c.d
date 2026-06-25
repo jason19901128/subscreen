@@ -1,0 +1,8 @@
+.pio/build/esp32-c6-lcd-147/lib198/lvgl/draw/sw/blend/riscv_v/lv_draw_sw_blend_riscv_v_to_rgb888.c.o: \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/draw/sw/blend/riscv_v/lv_draw_sw_blend_riscv_v_to_rgb888.c \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/draw/sw/blend/riscv_v/lv_draw_sw_blend_riscv_v_to_rgb888.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/draw/sw/blend/riscv_v/../../../../lv_conf_internal.h \
+ .pio/libdeps/esp32-c6-lcd-147/lvgl/src/draw/sw/blend/riscv_v/../../../../lv_conf_kconfig.h \
+ /Users/sen.jia-a2401/.platformio/packages/framework-arduinoespressif32-libs/esp32c6/qio_qspi/include/sdkconfig.h \
+ /Users/sen.jia-a2401/.platformio/packages/framework-arduinoespressif32-libs/esp32c6/include/esp_common/include/esp_attr.h \
+ include/lv_conf.h
