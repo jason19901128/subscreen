@@ -70,17 +70,21 @@ static void poll_status(void) {
     g_cached_status = fetched;
     g_has_cached_status = true;
     g_status = fetched;
-  } else if (g_has_cached_status && g_bridge_fail_streak < BRIDGE_FAIL_OFFLINE_THRESHOLD) {
-    g_bridge_fail_streak++;
-    g_status = g_cached_status;
-    g_status.bridgeReachable = false;
-    g_status.bridgeOnline = false;
-    g_status.agentDetail = "Bridge reconnecting...";
   } else {
     g_bridge_fail_streak++;
-    g_status = fetched;
-    g_status.bridgeReachable = false;
-    g_status.bridgeOnline = false;
+    if (ui_is_screensaver() && g_bridge_fail_streak < BRIDGE_FAIL_OFFLINE_THRESHOLD) {
+      return;
+    }
+    if (g_has_cached_status && g_bridge_fail_streak < BRIDGE_FAIL_OFFLINE_THRESHOLD) {
+      g_status = g_cached_status;
+      g_status.bridgeReachable = false;
+      g_status.bridgeOnline = false;
+      g_status.agentDetail = "Bridge reconnecting...";
+    } else {
+      g_status = fetched;
+      g_status.bridgeReachable = false;
+      g_status.bridgeOnline = false;
+    }
   }
 
   ui_update(g_status);

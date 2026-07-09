@@ -166,21 +166,53 @@ static bool status_blocks_screensaver(const CursorStatus &status) {
          st == "error";
 }
 
+static bool detail_implies_idle(const String &detail) {
+  return detail == "Waiting for Cursor" || detail == "Task completed" ||
+         detail == "Task aborted" || detail == "Session ended" || detail == "Ready";
+}
+
+static bool status_is_idle_like(const String &status) {
+  return status == "idle" || status == "offline";
+}
+
+static bool status_substantively_busy(const CursorStatus &status) {
+  if (!status_blocks_screensaver(status)) {
+    return false;
+  }
+  if ((status.agentStatus == "thinking" || status.agentStatus == "running") &&
+      detail_implies_idle(status.agentDetail)) {
+    return false;
+  }
+  return true;
+}
+
 static bool status_should_wake_screen(const CursorStatus &next, const CursorStatus &prev) {
-  if (next.agentStatus != prev.agentStatus) {
+  const bool next_busy = status_substantively_busy(next);
+  const bool prev_busy = status_substantively_busy(prev);
+
+  if (next_busy && !prev_busy) {
     return true;
   }
-  if (next.bridgeReachable != prev.bridgeReachable) {
-    return true;
-  }
-  if (status_blocks_screensaver(next)) {
+  if (next_busy) {
+    if (next.agentStatus != prev.agentStatus) {
+      return true;
+    }
     if (next.agentDetail != prev.agentDetail) {
       return true;
     }
     if (next.cursorOnline != prev.cursorOnline) {
       return true;
     }
+    return false;
   }
+
+  if (next.agentStatus != prev.agentStatus) {
+    if (status_is_idle_like(prev.agentStatus) && status_is_idle_like(next.agentStatus)) {
+      return false;
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -506,12 +538,12 @@ static void update_on_demand_ui(const CursorStatus &status) {
 void ui_update(const CursorStatus &status) {
   const bool wake_screen =
       screensaver_active &&
-      (status_should_wake_screen(status, last_status) || status_blocks_screensaver(status));
+      (status_should_wake_screen(status, last_status) || status_substantively_busy(status));
 
   if (wake_screen) {
     screensaver_exit();
   }
-  if (status_blocks_screensaver(status)) {
+  if (status_substantively_busy(status)) {
     screensaver_exit();
   }
 
@@ -611,7 +643,7 @@ void ui_screensaver_tick(void) {
   if (screensaver_active) {
     return;
   }
-  if (status_blocks_screensaver(last_status)) {
+  if (status_substantively_busy(last_status)) {
     last_active_ms = millis();
     update_sleep_countdown();
     return;

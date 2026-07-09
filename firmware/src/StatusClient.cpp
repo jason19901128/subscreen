@@ -62,10 +62,8 @@ bool fetchCursorStatus(CursorStatus &out) {
   const bool composerBlocking = doc["composer_blocking_pending"] | false;
   const bool agentTurnActive = doc["agent_turn_active"] | false;
   const bool cursorOnline = doc["cursor_online"] | false;
-  const bool detailConfirm =
-      out.agentDetail.startsWith("Review:") || out.agentDetail.startsWith("Confirm");
-  const bool awaitingConfirm = pendingConfirm || composerBlocking ||
-                               out.agentStatus == "awaiting_confirm" || detailConfirm;
+  const bool awaitingConfirm =
+      pendingConfirm || composerBlocking || out.agentStatus == "awaiting_confirm";
   if (awaitingConfirm) {
     out.agentStatus = "awaiting_confirm";
   } else if (out.agentDetail == "Task aborted" || out.agentDetail == "Task completed" ||

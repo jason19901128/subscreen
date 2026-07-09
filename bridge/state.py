@@ -195,15 +195,15 @@ class StateStore:
             self._persist_timer.start()
 
     def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            state = deepcopy(self._state)
         now = int(time.time())
+        with self._lock:
+            _prune_stale_review(self._state, now)
+            _expire_stale_confirm(self._state, now)
+            _expire_stale_turn(self._state, now)
+            state = deepcopy(self._state)
         state["bridge_online"] = True
         state["cursor_online"] = (now - state.get("updated_at", 0)) < STALE_AGENT_SEC
         _elevate_snapshot_from_composer(state)
-        _prune_stale_review(state, now)
-        _expire_stale_confirm(state, now)
-        _expire_stale_turn(state, now)
         _normalize_agent_status(state)
         if state.get("model"):
             state["model"] = _normalize_model(str(state["model"]))
@@ -549,7 +549,6 @@ def _user_confirm_pending(state: dict[str, Any]) -> bool:
     return bool(
         state.get("pending_confirm")
         or state.get("composer_blocking_pending")
-        or _detail_implies_confirm(state)
     )
 
 
@@ -573,9 +572,12 @@ def _composer_blocking_live(state: dict[str, Any]) -> bool:
 
 
 def _elevate_snapshot_from_composer(state: dict[str, Any]) -> None:
-    if _composer_blocking_live(state):
-        state["composer_blocking_pending"] = True
-        _apply_review_confirm(state)
+    if not _composer_blocking_live(state):
+        return
+    if not state.get("agent_turn_active") and not _has_review_artifacts(state):
+        return
+    state["composer_blocking_pending"] = True
+    _apply_review_confirm(state)
 
 
 def _dismiss_review_when_unblocked(state: dict[str, Any]) -> bool:
@@ -617,11 +619,17 @@ def _set_confirm(state: dict[str, Any], detail: str) -> None:
 def _clear_confirm(state: dict[str, Any]) -> None:
     state["pending_confirm"] = False
     state["confirm_since"] = 0
+    detail = str(state.get("agent_detail") or "")
     if state.get("agent_status") == "awaiting_confirm":
         state["agent_status"] = "running"
-        detail = str(state.get("agent_detail") or "")
         if detail.startswith("Confirm"):
             state["agent_detail"] = "Continuing"
+    elif _is_action_confirm_detail(state) or _is_review_confirm_detail(state):
+        if state.get("agent_turn_active"):
+            state["agent_detail"] = "Continuing"
+        else:
+            state["agent_detail"] = "Waiting for Cursor"
+            state["agent_status"] = "idle"
 
 
 def _clear_review_state(state: dict[str, Any]) -> None:
@@ -642,7 +650,14 @@ def _is_terminal_idle(state: dict[str, Any]) -> bool:
 def _expire_stale_turn(state: dict[str, Any], now: int) -> None:
     if not state.get("agent_turn_active"):
         return
-    if _user_confirm_pending(state):
+    if state.get("composer_blocking_pending"):
+        return
+    if state.get("pending_confirm") and _is_action_confirm_detail(state):
+        since = int(state.get("confirm_since") or 0)
+        if since <= 0 or (now - since) <= STALE_TURN_SEC:
+            return
+        _clear_confirm(state)
+    elif _user_confirm_pending(state):
         return
     busy = state.get("agent_status") in {"thinking", "running_tool", "running"}
     if not busy:
@@ -695,6 +710,9 @@ def _apply_working_or_idle(
 
 def _expire_stale_confirm(state: dict[str, Any], now: int) -> None:
     if not _user_confirm_pending(state):
+        if _is_action_confirm_detail(state) or _is_review_confirm_detail(state):
+            state["agent_detail"] = "Waiting for Cursor"
+            state["agent_status"] = "idle"
         return
     if state.get("composer_blocking_pending"):
         return
@@ -702,7 +720,12 @@ def _expire_stale_confirm(state: dict[str, Any], now: int) -> None:
         return
     if _is_action_confirm_detail(state):
         since = int(state.get("confirm_since") or 0)
-        if since > 0 and (now - since) > 120:
+        if since <= 0:
+            return
+        if not state.get("agent_turn_active") and (now - since) > STALE_TURN_SEC:
+            _clear_confirm(state)
+            return
+        if (now - since) > 120:
             _clear_confirm(state)
 
 
