@@ -73,6 +73,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "conversation_id": "",
     "composer_mode": "",
     "pending_confirm": False,
+    "confirm_source": "",
     "confirm_since": 0,
     "pending_review_files": [],
     "review_session_active": False,
@@ -326,10 +327,15 @@ class StateStore:
                 tool_name = str(payload.get("tool_name") or "Tool")
                 tool_input = _coerce_tool_input(payload.get("tool_input"))
                 _dismiss_review_when_unblocked(self._state)
-                if _is_hook_action_confirm_detail(self._state):
+                if _is_user_ui_confirm(self._state):
                     _sync_confirm_flags(self._state)
                 elif _tool_needs_confirm(tool_name):
-                    _set_confirm(self._state, _format_confirm_detail(tool_name, tool_input))
+                    source = "ask" if tool_name == "AskQuestion" else "switch_mode"
+                    _set_confirm(
+                        self._state,
+                        _format_confirm_detail(tool_name, tool_input),
+                        source=source,
+                    )
                 else:
                     if not self._state.get("pending_confirm"):
                         _clear_confirm(self._state)
@@ -402,30 +408,42 @@ class StateStore:
                 self._state["agent_detail"] = str(payload.get("error_message") or "Tool failed")
 
             elif event == "beforeShellExecution":
+                # beforeShellExecution fires for every shell, including auto-run.
+                # Showing CONFIRM for the whole command duration was a frequent false positive.
                 command = str(payload.get("command") or "")
                 preview = command.replace("\n", " ")[:44]
-                _set_confirm(self._state, f"Confirm Shell: {preview or 'command'}")
+                if not _is_user_ui_confirm(self._state):
+                    _clear_confirm(self._state)
+                    self._state["agent_status"] = "running_tool"
+                    self._state["agent_detail"] = f"Shell: {preview or 'command'}"
 
             elif event == "afterShellExecution":
-                _clear_confirm(self._state)
-                self._state["composer_blocking_pending"] = False
+                if not _is_user_ui_confirm(self._state):
+                    _clear_confirm(self._state)
                 _apply_working_or_idle(self._state, detail_idle="Shell finished")
 
             elif event == "beforeMCPExecution":
                 tool_name = str(payload.get("tool_name") or payload.get("mcp_tool") or "MCP")
-                _set_confirm(self._state, f"Confirm MCP: {tool_name[:40]}")
+                if not _is_user_ui_confirm(self._state):
+                    _clear_confirm(self._state)
+                    self._state["agent_status"] = "running_tool"
+                    self._state["agent_detail"] = f"MCP: {tool_name[:40]}"
 
             elif event == "afterMCPExecution":
-                _clear_confirm(self._state)
-                self._state["composer_blocking_pending"] = False
+                if not _is_user_ui_confirm(self._state):
+                    _clear_confirm(self._state)
                 _apply_working_or_idle(self._state, detail_idle="MCP finished")
 
             elif event == "subagentStart":
                 subagent_type = str(payload.get("subagent_type") or "subagent")
-                _set_confirm(self._state, f"Confirm subagent: {subagent_type[:32]}")
+                if not _is_user_ui_confirm(self._state):
+                    _clear_confirm(self._state)
+                    self._state["agent_status"] = "running_tool"
+                    self._state["agent_detail"] = f"Subagent: {subagent_type[:32]}"
 
             elif event == "subagentStop":
-                _clear_confirm(self._state)
+                if not _is_user_ui_confirm(self._state):
+                    _clear_confirm(self._state)
                 _apply_working_or_idle(self._state, detail_idle="Subagent finished")
 
         self._schedule_persist()
@@ -462,6 +480,8 @@ def _log_hook_event(event: str, payload: dict[str, Any]) -> None:
             "event": event,
             "tool_name": payload.get("tool_name"),
             "file_path": payload.get("file_path"),
+            "sandbox": payload.get("sandbox"),
+            "command": (str(payload.get("command") or "")[:80] or None),
         }
         with HOOK_DEBUG_LOG.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -609,8 +629,9 @@ def _mark_review_session(state: dict[str, Any]) -> None:
     state["review_session_active"] = True
 
 
-def _set_confirm(state: dict[str, Any], detail: str) -> None:
+def _set_confirm(state: dict[str, Any], detail: str, *, source: str = "generic") -> None:
     state["pending_confirm"] = True
+    state["confirm_source"] = source
     state["agent_status"] = "awaiting_confirm"
     state["agent_detail"] = detail
     state["confirm_since"] = int(time.time())
@@ -619,10 +640,11 @@ def _set_confirm(state: dict[str, Any], detail: str) -> None:
 def _clear_confirm(state: dict[str, Any]) -> None:
     state["pending_confirm"] = False
     state["confirm_since"] = 0
+    state["confirm_source"] = ""
     detail = str(state.get("agent_detail") or "")
     if state.get("agent_status") == "awaiting_confirm":
         state["agent_status"] = "running"
-        if detail.startswith("Confirm"):
+        if detail.startswith("Confirm") or detail.startswith("Review:"):
             state["agent_detail"] = "Continuing"
     elif _is_action_confirm_detail(state) or _is_review_confirm_detail(state):
         if state.get("agent_turn_active"):
@@ -738,6 +760,19 @@ def _reconcile_review_status(state: dict[str, Any]) -> bool:
 def _normalize_agent_status(state: dict[str, Any]) -> None:
     if state.get("agent_status") == "active":
         state["agent_status"] = "thinking"
+    # Drop legacy Shell/MCP/subagent "confirm" flags that are not real UI confirms.
+    if (
+        state.get("pending_confirm")
+        and not state.get("composer_blocking_pending")
+        and not _is_user_ui_confirm(state)
+    ):
+        _clear_confirm(state)
+        if state.get("agent_turn_active"):
+            state["agent_status"] = "thinking"
+            if not str(state.get("agent_detail") or "").strip() or str(
+                state.get("agent_detail") or ""
+            ).startswith("Confirm "):
+                state["agent_detail"] = "Working..."
     if state.get("composer_blocking_pending"):
         _apply_review_confirm(state)
     if _user_confirm_pending(state):
@@ -787,6 +822,25 @@ def _track_review_file(state: dict[str, Any], file_path: str) -> None:
     state["pending_review_files"] = files[-8:]
 
 
+def _is_user_ui_confirm(state: dict[str, Any]) -> bool:
+    """True only for confirms that map to a Cursor UI the user must click.
+
+    Shell/MCP/subagent before* hooks also fire for auto-run executions, so they
+    must not keep the display in CONFIRM for the whole command duration.
+    """
+    if state.get("composer_blocking_pending"):
+        return True
+    source = str(state.get("confirm_source") or "")
+    if source in {"ask", "switch_mode", "review"}:
+        return bool(state.get("pending_confirm"))
+    if not state.get("pending_confirm"):
+        return False
+    detail = str(state.get("agent_detail") or "")
+    if detail.startswith(("Confirm Shell:", "Confirm MCP:", "Confirm subagent:")):
+        return False
+    return detail.startswith("Review:") or detail.startswith("Confirm:")
+
+
 def _apply_review_confirm(state: dict[str, Any]) -> bool:
     if not state.get("composer_blocking_pending"):
         return False
@@ -797,9 +851,9 @@ def _apply_review_confirm(state: dict[str, Any]) -> bool:
             detail = f"Review: Keep / Undo ({files[0]})"
         else:
             detail = f"Review: Keep / Undo ({count} files)"
-        _set_confirm(state, detail)
+        _set_confirm(state, detail, source="review")
         return True
-    _set_confirm(state, REVIEW_FALLBACK_DETAIL)
+    _set_confirm(state, REVIEW_FALLBACK_DETAIL, source="review")
     return True
 
 

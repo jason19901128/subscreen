@@ -54,24 +54,26 @@ def run() -> None:
         store.apply_hook({**base, "hook_event_name": "postToolUse", "tool_name": "AskQuestion"})
         assert_idle(store, "postToolUse AskQuestion clears")
 
-        # Shell approval path
+        # Shell/MCP/subagent: before* hooks fire for auto-run too → TOOL, not CONFIRM
         store.apply_hook({**base, "hook_event_name": "beforeSubmitPrompt", "prompt": "run shell"})
         store.apply_hook({**base, "hook_event_name": "beforeShellExecution", "command": "ls -la"})
-        assert_confirm(store, "beforeShellExecution")
+        status, pending, detail = snap(store)
+        if status != "running_tool" or pending:
+            raise AssertionError(f"beforeShellExecution should be TOOL, got status={status} pending={pending} detail={detail}")
         store.apply_hook({**base, "hook_event_name": "afterAgentThought"})
-        assert_confirm(store, "afterAgentThought must not clear Shell confirm")
-        store.apply_hook({**base, "hook_event_name": "postToolUse", "tool_name": "Shell"})
-        assert_confirm(store, "postToolUse Shell must not clear before afterShellExecution")
+        status, pending, _ = snap(store)
+        if pending or status == "awaiting_confirm":
+            raise AssertionError("shell path must not stay CONFIRM")
         store.apply_hook({**base, "hook_event_name": "preToolUse", "tool_name": "Read"})
-        assert_confirm(store, "preToolUse Read must not clear Shell confirm")
-        store.apply_hook({**base, "hook_event_name": "preToolUse", "tool_name": "Grep"})
-        assert_confirm(store, "preToolUse Grep must not clear Shell confirm")
-        store.apply_hook({**base, "hook_event_name": "stop", "status": "completed"})
-        assert_confirm(store, "stop must not clear Shell confirm")
+        status, pending, _ = snap(store)
+        if pending or status == "awaiting_confirm":
+            raise AssertionError("preToolUse Read during shell must not CONFIRM")
         store.apply_hook({**base, "hook_event_name": "afterShellExecution"})
         status, pending, _ = snap(store)
         if status == "idle":
             raise AssertionError("afterShellExecution should not idle during active turn")
+        if pending or status == "awaiting_confirm":
+            raise AssertionError("afterShellExecution must clear any confirm")
 
         # Mid-turn postToolUse should stay busy (not idle)
         store.apply_hook({**base, "hook_event_name": "beforeSubmitPrompt", "prompt": "work"})
@@ -156,16 +158,27 @@ def run() -> None:
         if status == "awaiting_confirm" or pending:
             raise AssertionError("afterAgentThought during turn must stay thinking, not confirm")
 
-        # MCP path
+        # MCP path → TOOL, not CONFIRM
         store.apply_hook({**base, "hook_event_name": "beforeSubmitPrompt", "prompt": "mcp"})
         store.apply_hook({**base, "hook_event_name": "beforeMCPExecution", "tool_name": "my_tool"})
-        assert_confirm(store, "beforeMCPExecution")
+        status, pending, detail = snap(store)
+        if status != "running_tool" or pending:
+            raise AssertionError(f"beforeMCPExecution should be TOOL, got {status} pending={pending} detail={detail}")
         store.apply_hook({**base, "hook_event_name": "afterMCPExecution"})
         status, pending, _ = snap(store)
         if status == "idle" and not pending:
             pass
         elif status != "thinking":
             raise AssertionError(f"afterMCPExecution expected thinking during turn, got {status}")
+
+        # AskQuestion must remain CONFIRM even if Shell hook fires in parallel
+        store.apply_hook({**base, "hook_event_name": "beforeSubmitPrompt", "prompt": "ask"})
+        store.apply_hook({**base, "hook_event_name": "preToolUse", "tool_name": "AskQuestion", "tool_input": {"questions": [{"prompt": "Pick?"}]}})
+        assert_confirm(store, "AskQuestion before shell")
+        store.apply_hook({**base, "hook_event_name": "beforeShellExecution", "command": "echo hi"})
+        assert_confirm(store, "Shell must not clear AskQuestion confirm")
+        store.apply_hook({**base, "hook_event_name": "postToolUse", "tool_name": "AskQuestion"})
+        assert_idle(store, "AskQuestion cleared")
 
         store.apply_hook({**base, "hook_event_name": "beforeSubmitPrompt", "prompt": "x"})
         store.apply_hook({**base, "hook_event_name": "stop", "status": "aborted"})
