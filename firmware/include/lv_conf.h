@@ -6,15 +6,17 @@
 #define LV_VER_RES_MAX 320
 
 #define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+#define LV_FONT_MONTSERRAT_24 1
+#define LV_FONT_DEFAULT &lv_font_montserrat_16
 
 #define LV_USE_LOG 0
 #define LV_USE_PERF_MONITOR 0
 #define LV_USE_MEM_MONITOR 0
 #define LV_USE_SYSMON 0
 
-#define LV_USE_ANIMATION 0
+#define LV_USE_ANIMATION 1
 #define LV_USE_SHADOW 0
 #define LV_USE_BLEND_MODES 0
 #define LV_USE_OPA_SCALE 0

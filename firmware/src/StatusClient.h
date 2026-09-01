@@ -17,6 +17,10 @@ struct CursorStatus {
   int onDemandUsedCents = -1;
   int onDemandRemainingCents = -1;
   int onDemandLimitCents = -1;
+  int planLimitCents = -1;
+  int planIncludedSpendCents = -1;
+  int planRemainingCents = -1;
+  int planPercentUsed = -1;
   String onDemandError = "";
   bool bridgeReachable = false;
   bool bridgeOnline = false;

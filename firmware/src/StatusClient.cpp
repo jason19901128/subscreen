@@ -116,6 +116,26 @@ bool fetchCursorStatus(CursorStatus &out) {
   } else {
     out.onDemandLimitCents = -1;
   }
+  if (!od["plan_limit_cents"].isNull()) {
+    out.planLimitCents = od["plan_limit_cents"].as<int>();
+  } else {
+    out.planLimitCents = -1;
+  }
+  if (!od["plan_included_spend_cents"].isNull()) {
+    out.planIncludedSpendCents = od["plan_included_spend_cents"].as<int>();
+  } else {
+    out.planIncludedSpendCents = -1;
+  }
+  if (!od["plan_remaining_cents"].isNull()) {
+    out.planRemainingCents = od["plan_remaining_cents"].as<int>();
+  } else {
+    out.planRemainingCents = -1;
+  }
+  if (!od["plan_percent_used"].isNull()) {
+    out.planPercentUsed = static_cast<int>(od["plan_percent_used"].as<float>() + 0.5f);
+  } else {
+    out.planPercentUsed = -1;
+  }
   out.onDemandError = od["error"] | "";
   return true;
 }

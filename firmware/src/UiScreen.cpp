@@ -15,7 +15,22 @@ static const uint8_t NORMAL_BACKLIGHT = 40;
 static const int EDGE_THICK = 8;
 static const int EDGE_THICK_CONFIRM = 12;
 static const int EDGE_RADIUS = 18;
-static const int FOOTER_METRICS_H = 98;
+static const int PANEL_PAD = 5;
+static const int PANEL_ROW_GAP = 3;
+static const int HEADER_H = 24;
+static const int PROJECT_H = 20;
+static const int BANNER_H = 50;
+static const int DETAIL_LINE_H = 20;
+static const int DETAIL_MAX_LINES = 4;
+static const int DETAIL_MAX_H = DETAIL_LINE_H * DETAIL_MAX_LINES;
+static const int FOOTER_METRICS_H = 78;
+static const int FOOTER_LABEL_H = 20;
+static const int FOOTER_BAR_H = 5;
+static const int FOOTER_CTX_H = 20;
+
+static const lv_font_t *FONT_BODY = &lv_font_montserrat_16;
+static const lv_font_t *FONT_BANNER = &lv_font_montserrat_24;
+static const lv_font_t *FONT_EDGE = &lv_font_montserrat_14;
 
 static CursorStatus last_status;
 static unsigned long last_active_ms = 0;
@@ -33,15 +48,18 @@ static lv_obj_t *lbl_status_edge;
 static lv_obj_t *panel_status_banner;
 static lv_obj_t *lbl_status_banner;
 static lv_obj_t *lbl_detail;
-static lv_obj_t *lbl_model;
 static lv_obj_t *bar_on_demand;
-static lv_obj_t *lbl_on_demand;
+static lv_obj_t *bar_od;
+static lv_obj_t *lbl_usage_plan;
+static lv_obj_t *lbl_usage_od;
 static lv_obj_t *bar_tokens;
 static lv_obj_t *lbl_tokens;
 static lv_obj_t *dot_bridge;
 static lv_obj_t *arc_sleep_countdown;
 static unsigned long last_countdown_draw_ms = 0;
 static int last_countdown_sec = -1;
+static String scroll_text_project;
+static String scroll_text_detail;
 
 struct StatusTheme {
   const char *label;
@@ -100,6 +118,17 @@ static int tokenBarPercent(int tokens, int windowSize) {
   return static_cast<int>(pct);
 }
 
+static int usageBarPercent(int usedCents, int limitCents) {
+  if (limitCents <= 0 || usedCents < 0) {
+    return 0;
+  }
+  long pct = (static_cast<long>(usedCents) * 100L) / limitCents;
+  if (pct > 100) {
+    pct = 100;
+  }
+  return static_cast<int>(pct);
+}
+
 static void formatTokenCompact(int tokens, char *buf, size_t len) {
   if (tokens <= 0) {
     snprintf(buf, len, "0");
@@ -112,21 +141,14 @@ static void formatTokenCompact(int tokens, char *buf, size_t len) {
   snprintf(buf, len, "%.1fK", static_cast<double>(tokens) / 1000.0);
 }
 
-static int onDemandUsedBarPercent(int usedCents, int limitCents) {
-  if (limitCents <= 0 || usedCents < 0) {
-    return 0;
-  }
-  long pct = (static_cast<long>(usedCents) * 100L) / limitCents;
-  if (pct > 100) {
-    pct = 100;
-  }
-  return static_cast<int>(pct);
-}
-
 static void formatUsdFromCents(char *buf, size_t len, int cents) {
   const int dollars = cents / 100;
   const int frac = cents >= 0 ? cents % 100 : (-cents) % 100;
-  snprintf(buf, len, "$%d.%02d", dollars, frac);
+  if (frac == 0) {
+    snprintf(buf, len, "$%d", dollars);
+  } else {
+    snprintf(buf, len, "$%d.%02d", dollars, frac);
+  }
 }
 
 static int innerCornerRadius(void) {
@@ -139,6 +161,47 @@ static void style_metrics_footer(lv_obj_t *obj) {
   lv_obj_set_style_border_width(obj, 0, 0);
   lv_obj_set_style_pad_all(obj, 0, 0);
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void style_compact_label(lv_obj_t *label) {
+  lv_obj_set_style_pad_all(label, 0, 0);
+  lv_obj_set_style_text_line_space(label, 0, 0);
+}
+
+static bool label_text_overflows_x(lv_obj_t *label, const char *text) {
+  if (label == nullptr || text == nullptr || text[0] == '\0') {
+    return false;
+  }
+  const lv_font_t *font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+  if (font == nullptr) {
+    return false;
+  }
+  lv_point_t size;
+  lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const int32_t max_w = lv_obj_get_content_width(label);
+  return max_w > 0 && size.x > max_w;
+}
+
+static void update_label_scroll_mode(lv_obj_t *label, const char *text, String &cache,
+                                     bool allow_scroll) {
+  if (label == nullptr) {
+    return;
+  }
+  const String next_text = text ? String(text) : String("");
+  const bool overflow = allow_scroll && label_text_overflows_x(label, text);
+  const lv_label_long_mode_t want =
+      overflow ? LV_LABEL_LONG_SCROLL_CIRCULAR : LV_LABEL_LONG_CLIP;
+  if (cache == next_text && lv_label_get_long_mode(label) == want) {
+    return;
+  }
+  cache = next_text;
+
+  if (lv_label_get_long_mode(label) != want) {
+    lv_label_set_long_mode(label, want);
+  }
+  if (overflow) {
+    lv_obj_set_style_anim_duration(label, 14000, LV_PART_MAIN);
+  }
 }
 
 static void apply_status_theme(const StatusTheme &theme, bool is_confirm) {
@@ -225,11 +288,9 @@ static void apply_backlight(uint8_t level) {
 }
 
 static void update_detail_scroll_mode(const CursorStatus &status) {
-  if (status_blocks_screensaver(status)) {
-    lv_label_set_long_mode(lbl_detail, LV_LABEL_LONG_SCROLL_CIRCULAR);
-  } else {
-    lv_label_set_long_mode(lbl_detail, LV_LABEL_LONG_CLIP);
-  }
+  const int detail_h =
+      status_blocks_screensaver(status) ? DETAIL_MAX_H : DETAIL_LINE_H * 2;
+  lv_obj_set_height(lbl_detail, detail_h);
 }
 
 static bool status_visual_changed(const CursorStatus &next, const CursorStatus &prev) {
@@ -240,7 +301,11 @@ static bool status_visual_changed(const CursorStatus &next, const CursorStatus &
          next.onDemandUsedCents != prev.onDemandUsedCents ||
          next.onDemandLimitCents != prev.onDemandLimitCents ||
          next.onDemandEnabled != prev.onDemandEnabled ||
-         next.onDemandUnlimited != prev.onDemandUnlimited || next.onDemandError != prev.onDemandError;
+         next.onDemandUnlimited != prev.onDemandUnlimited || next.onDemandError != prev.onDemandError ||
+         next.planLimitCents != prev.planLimitCents ||
+         next.planIncludedSpendCents != prev.planIncludedSpendCents ||
+         next.planRemainingCents != prev.planRemainingCents ||
+         next.planPercentUsed != prev.planPercentUsed;
 }
 
 static void style_sleep_arc_indicator(int remain_sec) {
@@ -334,7 +399,7 @@ void ui_init(void) {
   lbl_status_edge = lv_label_create(frame_outer);
   lv_label_set_text(lbl_status_edge, "BOOT");
   lv_obj_set_style_text_color(lbl_status_edge, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_text_font(lbl_status_edge, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(lbl_status_edge, FONT_EDGE, 0);
   lv_obj_align(lbl_status_edge, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_move_foreground(lbl_status_edge);
 
@@ -344,20 +409,23 @@ void ui_init(void) {
   lv_obj_set_style_bg_color(panel_content, lv_color_hex(0x0F172A), 0);
   lv_obj_set_style_radius(panel_content, innerCornerRadius(), 0);
   lv_obj_set_style_border_width(panel_content, 0, 0);
-  lv_obj_set_style_pad_all(panel_content, 6, 0);
+  lv_obj_set_style_pad_all(panel_content, PANEL_PAD, 0);
+  lv_obj_set_style_pad_row(panel_content, PANEL_ROW_GAP, 0);
   lv_obj_set_style_clip_corner(panel_content, true, 0);
+  lv_obj_remove_flag(panel_content, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   lv_obj_clear_flag(panel_content, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(panel_content, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(panel_content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
   lv_obj_t *header = lv_obj_create(panel_content);
-  lv_obj_set_size(header, LV_PCT(100), 24);
-  lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_size(header, LV_PCT(100), HEADER_H);
   lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(header, 0, 0);
   lv_obj_set_style_pad_all(header, 0, 0);
   lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
   dot_bridge = lv_obj_create(header);
-  lv_obj_set_size(dot_bridge, 10, 10);
+  lv_obj_set_size(dot_bridge, 12, 12);
   lv_obj_align(dot_bridge, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_set_style_radius(dot_bridge, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(dot_bridge, lv_color_hex(0x64748B), 0);
@@ -366,11 +434,11 @@ void ui_init(void) {
   lbl_title = lv_label_create(header);
   lv_label_set_text(lbl_title, "Cursor");
   lv_obj_set_style_text_color(lbl_title, lv_color_hex(0xF8FAFC), 0);
-  lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
-  lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 14, 0);
+  lv_obj_set_style_text_font(lbl_title, FONT_BODY, 0);
+  lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 16, 0);
 
   arc_sleep_countdown = lv_arc_create(header);
-  lv_obj_set_size(arc_sleep_countdown, SLEEP_ARC_SIZE, SLEEP_ARC_SIZE);
+  lv_obj_set_size(arc_sleep_countdown, 20, 20);
   lv_obj_align(arc_sleep_countdown, LV_ALIGN_RIGHT_MID, 0, 0);
   lv_arc_set_range(arc_sleep_countdown, 0, SCREENSAVER_COUNTDOWN_SEC);
   lv_arc_set_value(arc_sleep_countdown, SCREENSAVER_COUNTDOWN_SEC);
@@ -389,13 +457,14 @@ void ui_init(void) {
   lbl_project = lv_label_create(panel_content);
   lv_label_set_text(lbl_project, "-");
   lv_obj_set_style_text_color(lbl_project, lv_color_hex(0xCBD5E1), 0);
-  lv_obj_set_style_text_font(lbl_project, &lv_font_montserrat_14, 0);
-  lv_obj_align(lbl_project, LV_ALIGN_TOP_LEFT, 2, 28);
-  lv_obj_set_width(lbl_project, LV_PCT(98));
+  lv_obj_set_style_text_font(lbl_project, FONT_BODY, 0);
+  lv_obj_set_size(lbl_project, LV_PCT(100), PROJECT_H);
+  style_compact_label(lbl_project);
+  lv_label_set_long_mode(lbl_project, LV_LABEL_LONG_CLIP);
 
   panel_status_banner = lv_obj_create(panel_content);
-  lv_obj_set_size(panel_status_banner, LV_PCT(96), 40);
-  lv_obj_align(panel_status_banner, LV_ALIGN_TOP_MID, 0, 50);
+  lv_obj_set_size(panel_status_banner, LV_PCT(96), BANNER_H);
+  lv_obj_set_style_align(panel_status_banner, LV_ALIGN_CENTER, 0);
   lv_obj_set_style_radius(panel_status_banner, 8, 0);
   lv_obj_set_style_border_width(panel_status_banner, 2, 0);
   lv_obj_set_style_border_color(panel_status_banner, lv_color_hex(0xF8FAFC), 0);
@@ -406,133 +475,207 @@ void ui_init(void) {
   lbl_status_banner = lv_label_create(panel_status_banner);
   lv_label_set_text(lbl_status_banner, "BOOT");
   lv_obj_set_style_text_color(lbl_status_banner, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_text_font(lbl_status_banner, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(lbl_status_banner, FONT_BANNER, 0);
   lv_obj_center(lbl_status_banner);
 
   lbl_detail = lv_label_create(panel_content);
   lv_label_set_text(lbl_detail, "Connecting...");
   lv_obj_set_style_text_color(lbl_detail, lv_color_hex(0xE2E8F0), 0);
-  lv_obj_set_style_text_font(lbl_detail, &lv_font_montserrat_14, 0);
-  lv_obj_align(lbl_detail, LV_ALIGN_TOP_LEFT, 2, 96);
-  lv_obj_set_width(lbl_detail, LV_PCT(98));
-  lv_obj_set_height(lbl_detail, LCD_HEIGHT - EDGE_THICK * 2 - 12 - 96 - FOOTER_METRICS_H - 22);
+  lv_obj_set_style_text_font(lbl_detail, FONT_BODY, 0);
+  lv_obj_set_size(lbl_detail, LV_PCT(100), DETAIL_LINE_H * 2);
+  style_compact_label(lbl_detail);
   lv_label_set_long_mode(lbl_detail, LV_LABEL_LONG_CLIP);
 
-  lbl_model = lv_label_create(panel_content);
-  lv_label_set_text(lbl_model, "Model: -");
-  lv_obj_set_style_text_color(lbl_model, lv_color_hex(0x94A3B8), 0);
-  lv_obj_set_style_text_font(lbl_model, &lv_font_montserrat_14, 0);
-  lv_obj_align(lbl_model, LV_ALIGN_BOTTOM_LEFT, 2, -(FOOTER_METRICS_H + 2));
+  lv_obj_t *panel_bottom_spacer = lv_obj_create(panel_content);
+  lv_obj_set_width(panel_bottom_spacer, LV_PCT(100));
+  lv_obj_set_flex_grow(panel_bottom_spacer, 1);
+  style_metrics_footer(panel_bottom_spacer);
 
   lv_obj_t *footer_metrics = lv_obj_create(panel_content);
   lv_obj_set_size(footer_metrics, LV_PCT(100), FOOTER_METRICS_H);
-  lv_obj_align(footer_metrics, LV_ALIGN_BOTTOM_MID, 0, 0);
   style_metrics_footer(footer_metrics);
+  lv_obj_remove_flag(footer_metrics, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   lv_obj_set_flex_flow(footer_metrics, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(footer_metrics, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(footer_metrics, 3, 0);
-  lv_obj_set_style_pad_left(footer_metrics, 2, 0);
+  lv_obj_set_style_pad_row(footer_metrics, 2, 0);
 
-  lv_obj_t *od_title = lv_label_create(footer_metrics);
-  lv_label_set_text(od_title, "On-Demand");
-  lv_obj_set_style_text_color(od_title, lv_color_hex(0xCBD5E1), 0);
-  lv_obj_set_style_text_font(od_title, &lv_font_montserrat_14, 0);
-  lv_obj_set_width(od_title, LV_PCT(100));
-
-  lbl_on_demand = lv_label_create(footer_metrics);
-  lv_label_set_text(lbl_on_demand, "--");
-  lv_obj_set_style_text_color(lbl_on_demand, lv_color_hex(0xFDE68A), 0);
-  lv_obj_set_style_text_font(lbl_on_demand, &lv_font_montserrat_14, 0);
-  lv_obj_set_width(lbl_on_demand, LV_PCT(100));
+  lbl_usage_plan = lv_label_create(footer_metrics);
+  lv_label_set_text(lbl_usage_plan, "Plan: --");
+  lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0xFDE68A), 0);
+  lv_obj_set_style_text_font(lbl_usage_plan, FONT_BODY, 0);
+  lv_obj_set_size(lbl_usage_plan, LV_PCT(100), FOOTER_LABEL_H);
+  style_compact_label(lbl_usage_plan);
+  lv_label_set_long_mode(lbl_usage_plan, LV_LABEL_LONG_DOT);
 
   bar_on_demand = lv_bar_create(footer_metrics);
-  lv_obj_set_size(bar_on_demand, LV_PCT(98), 5);
+  lv_obj_set_size(bar_on_demand, LV_PCT(100), FOOTER_BAR_H);
   lv_bar_set_range(bar_on_demand, 0, 100);
   lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0x334155), LV_PART_MAIN);
   lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0xF59E0B), LV_PART_INDICATOR);
+  lv_obj_set_style_radius(bar_on_demand, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(bar_on_demand, 1, LV_PART_INDICATOR);
 
-  lv_obj_t *metrics_spacer = lv_obj_create(footer_metrics);
-  lv_obj_set_size(metrics_spacer, LV_PCT(100), 4);
-  style_metrics_footer(metrics_spacer);
+  lbl_usage_od = lv_label_create(footer_metrics);
+  lv_label_set_text(lbl_usage_od, "OD: --");
+  lv_obj_set_style_text_color(lbl_usage_od, lv_color_hex(0xCBD5E1), 0);
+  lv_obj_set_style_text_font(lbl_usage_od, FONT_BODY, 0);
+  lv_obj_set_size(lbl_usage_od, LV_PCT(100), FOOTER_LABEL_H);
+  style_compact_label(lbl_usage_od);
+  lv_label_set_long_mode(lbl_usage_od, LV_LABEL_LONG_DOT);
+  lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
 
-  lv_obj_t *token_title = lv_label_create(footer_metrics);
-  lv_label_set_text(token_title, "Context");
-  lv_obj_set_style_text_color(token_title, lv_color_hex(0x64748B), 0);
-  lv_obj_set_style_text_font(token_title, &lv_font_montserrat_14, 0);
-  lv_obj_set_width(token_title, LV_PCT(100));
+  bar_od = lv_bar_create(footer_metrics);
+  lv_obj_set_size(bar_od, LV_PCT(100), FOOTER_BAR_H);
+  lv_bar_set_range(bar_od, 0, 100);
+  lv_bar_set_value(bar_od, 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x334155), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x38BDF8), LV_PART_INDICATOR);
+  lv_obj_set_style_radius(bar_od, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(bar_od, 1, LV_PART_INDICATOR);
+  lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
 
-  bar_tokens = lv_bar_create(footer_metrics);
-  lv_obj_set_size(bar_tokens, LV_PCT(98), 5);
+  lv_obj_t *ctx_row = lv_obj_create(footer_metrics);
+  lv_obj_set_size(ctx_row, LV_PCT(100), FOOTER_CTX_H);
+  style_metrics_footer(ctx_row);
+  lv_obj_set_flex_flow(ctx_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(ctx_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(ctx_row, 4, 0);
+
+  bar_tokens = lv_bar_create(ctx_row);
+  lv_obj_set_height(bar_tokens, FOOTER_BAR_H);
+  lv_obj_set_flex_grow(bar_tokens, 1);
   lv_bar_set_range(bar_tokens, 0, 100);
   lv_bar_set_value(bar_tokens, 0, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(bar_tokens, lv_color_hex(0x334155), LV_PART_MAIN);
   lv_obj_set_style_bg_color(bar_tokens, lv_color_hex(0x38BDF8), LV_PART_INDICATOR);
+  lv_obj_set_style_radius(bar_tokens, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(bar_tokens, 1, LV_PART_INDICATOR);
 
-  lbl_tokens = lv_label_create(footer_metrics);
+  lbl_tokens = lv_label_create(ctx_row);
   lv_label_set_text(lbl_tokens, "0");
-  lv_obj_set_style_text_color(lbl_tokens, lv_color_hex(0xE2E8F0), 0);
-  lv_obj_set_style_text_font(lbl_tokens, &lv_font_montserrat_14, 0);
-  lv_obj_set_width(lbl_tokens, LV_PCT(100));
-  lv_label_set_long_mode(lbl_tokens, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_color(lbl_tokens, lv_color_hex(0x94A3B8), 0);
+  lv_obj_set_style_text_font(lbl_tokens, FONT_BODY, 0);
+  lv_obj_set_size(lbl_tokens, 44, FOOTER_CTX_H);
+  style_compact_label(lbl_tokens);
+  lv_label_set_long_mode(lbl_tokens, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_align(lbl_tokens, LV_TEXT_ALIGN_RIGHT, 0);
 }
 
 static void update_on_demand_ui(const CursorStatus &status) {
+  lv_color_t plan_text = lv_color_hex(0xFDE68A);
+  lv_color_t plan_bar = lv_color_hex(0xF59E0B);
+
   if (status.onDemandError.length() && status.onDemandError != "not_fetched") {
     lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
-    lv_label_set_text(lbl_on_demand, "OD: unavailable");
-    lv_obj_set_style_text_color(lbl_on_demand, lv_color_hex(0x94A3B8), 0);
+    lv_label_set_text(lbl_usage_plan, "Usage unavailable");
+    lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0x94A3B8), 0);
     lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0x475569), LV_PART_INDICATOR);
+    lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
     return;
   }
 
-  if (!status.onDemandEnabled && status.onDemandUsedCents < 0 && status.onDemandLimitCents < 0) {
+  const bool hasPlan = status.planLimitCents > 0;
+  const bool hasOd = status.onDemandLimitCents > 0;
+
+  if (!status.onDemandEnabled && !hasPlan && status.onDemandUsedCents < 0 &&
+      status.onDemandLimitCents < 0) {
     lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
-    lv_label_set_text(lbl_on_demand, "OD: loading...");
-    lv_obj_set_style_text_color(lbl_on_demand, lv_color_hex(0x94A3B8), 0);
+    lv_label_set_text(lbl_usage_plan, "Loading usage...");
+    lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0x94A3B8), 0);
     lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0xF59E0B), LV_PART_INDICATOR);
+    lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
     return;
   }
 
-  int usedCents = status.onDemandUsedCents;
-  const int limitCents = status.onDemandLimitCents;
-  if (usedCents < 0 && limitCents > 0 && status.onDemandRemainingCents >= 0) {
-    usedCents = limitCents - status.onDemandRemainingCents;
-    if (usedCents < 0) {
-      usedCents = 0;
-    }
-  }
+  char planLine[40] = "";
+  char odLine[40] = "";
+  int planBarPct = 0;
+  int odBarPct = 0;
+  bool showOd = false;
+  bool showOdBar = false;
 
-  char odLine[40];
-  if (status.onDemandUnlimited || limitCents <= 0) {
-    if (usedCents >= 0) {
-      char usd[16];
-      formatUsdFromCents(usd, sizeof(usd), usedCents);
-      snprintf(odLine, sizeof(odLine), "%s used", usd);
-    } else {
-      snprintf(odLine, sizeof(odLine), "Unlimited");
+  if (hasPlan) {
+    int planUsed = status.planIncludedSpendCents >= 0 ? status.planIncludedSpendCents : 0;
+    if (planUsed <= 0 && status.planLimitCents > 0 && status.planRemainingCents >= 0) {
+      planUsed = status.planLimitCents - status.planRemainingCents;
+      if (planUsed < 0) {
+        planUsed = 0;
+      }
     }
-    lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
-  } else {
     char used[16];
     char limit[16];
-    formatUsdFromCents(used, sizeof(used), usedCents >= 0 ? usedCents : 0);
-    formatUsdFromCents(limit, sizeof(limit), limitCents);
-    snprintf(odLine, sizeof(odLine), "%s / %s", used, limit);
-    const int pct = onDemandUsedBarPercent(usedCents >= 0 ? usedCents : 0, limitCents);
-    lv_bar_set_value(bar_on_demand, pct, LV_ANIM_OFF);
+    formatUsdFromCents(used, sizeof(used), planUsed);
+    formatUsdFromCents(limit, sizeof(limit), status.planLimitCents);
+    snprintf(planLine, sizeof(planLine), "Plan: %s / %s", used, limit);
+    planBarPct = usageBarPercent(planUsed, status.planLimitCents);
   }
 
-  lv_label_set_text(lbl_on_demand, odLine);
-  lv_color_t od_text = lv_color_hex(0xFDE68A);
-  lv_color_t od_bar = lv_color_hex(0xF59E0B);
-  if (!status.onDemandUnlimited && limitCents > 0 && usedCents >= 0 &&
-      usedCents * 100 / limitCents >= 80) {
-    od_text = lv_color_hex(0xFCA5A5);
-    od_bar = lv_color_hex(0xEF4444);
+  if (hasOd || status.onDemandUsedCents >= 0) {
+    int usedCents = status.onDemandUsedCents;
+    const int limitCents = status.onDemandLimitCents;
+    if (usedCents < 0 && limitCents > 0 && status.onDemandRemainingCents >= 0) {
+      usedCents = limitCents - status.onDemandRemainingCents;
+      if (usedCents < 0) {
+        usedCents = 0;
+      }
+    }
+    if (status.onDemandUnlimited || limitCents <= 0) {
+      if (usedCents >= 0) {
+        char usd[16];
+        formatUsdFromCents(usd, sizeof(usd), usedCents);
+        snprintf(odLine, sizeof(odLine), "OD: %s used", usd);
+      } else {
+        snprintf(odLine, sizeof(odLine), "OD: unlimited");
+      }
+    } else {
+      char used[16];
+      char limit[16];
+      formatUsdFromCents(used, sizeof(used), usedCents >= 0 ? usedCents : 0);
+      formatUsdFromCents(limit, sizeof(limit), limitCents);
+      snprintf(odLine, sizeof(odLine), "OD: %s / %s", used, limit);
+      odBarPct = usageBarPercent(usedCents >= 0 ? usedCents : 0, limitCents);
+      showOdBar = true;
+    }
+    showOd = true;
   }
-  lv_obj_set_style_text_color(lbl_on_demand, od_text, 0);
-  lv_obj_set_style_bg_color(bar_on_demand, od_bar, LV_PART_INDICATOR);
+
+  if (planLine[0] == '\0' && !showOd) {
+    snprintf(planLine, sizeof(planLine), "Usage: --");
+  } else if (planLine[0] == '\0' && showOd) {
+    snprintf(planLine, sizeof(planLine), "Plan: n/a");
+  }
+
+  if (planBarPct >= 80) {
+    plan_text = lv_color_hex(0xFCA5A5);
+    plan_bar = lv_color_hex(0xEF4444);
+  }
+
+  lv_bar_set_value(bar_on_demand, planBarPct, LV_ANIM_OFF);
+  lv_label_set_text(lbl_usage_plan, planLine);
+  lv_obj_set_style_text_color(lbl_usage_plan, plan_text, 0);
+  lv_obj_set_style_bg_color(bar_on_demand, plan_bar, LV_PART_INDICATOR);
+
+  if (showOd) {
+    lv_label_set_text(lbl_usage_od, odLine);
+    lv_obj_remove_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
+    if (showOdBar) {
+      lv_color_t od_bar = lv_color_hex(0x38BDF8);
+      if (odBarPct >= 80) {
+        od_bar = lv_color_hex(0xEF4444);
+      }
+      lv_bar_set_value(bar_od, odBarPct, LV_ANIM_OFF);
+      lv_obj_set_style_bg_color(bar_od, od_bar, LV_PART_INDICATOR);
+      lv_obj_remove_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
+    }
+  } else {
+    lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 void ui_update(const CursorStatus &status) {
@@ -580,15 +723,22 @@ void ui_update(const CursorStatus &status) {
     lv_obj_set_style_text_color(lbl_detail, lv_color_hex(0xE2E8F0), 0);
   }
 
-  lv_label_set_text(lbl_project, status.project.c_str());
-  lv_label_set_text(lbl_detail, status.agentDetail.c_str());
-
   String modelName = status.model.length() ? status.model : String("-");
   if (modelName.equalsIgnoreCase("default")) {
     modelName = "Auto";
   }
-  String modelLine = String("Model: ") + modelName;
-  lv_label_set_text(lbl_model, modelLine.c_str());
+  String projectLine = status.project.length() ? status.project : String("-");
+  if (modelName != "-") {
+    projectLine += " · ";
+    projectLine += modelName;
+  }
+
+  lv_label_set_text(lbl_project, projectLine.c_str());
+  lv_label_set_text(lbl_detail, status.agentDetail.c_str());
+
+  const bool detail_overflow = label_text_overflows_x(lbl_detail, status.agentDetail.c_str());
+  update_label_scroll_mode(lbl_detail, status.agentDetail.c_str(), scroll_text_detail, true);
+  update_label_scroll_mode(lbl_project, projectLine.c_str(), scroll_text_project, !detail_overflow);
 
   update_on_demand_ui(status);
 
