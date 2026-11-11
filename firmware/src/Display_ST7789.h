@@ -6,7 +6,8 @@
 #define LCD_WIDTH 172
 #define LCD_HEIGHT 320
 
-#define SPIFreq 40000000
+// 20 MHz is more stable on ESP32-C6 when CPU runs at 80 MHz.
+#define SPIFreq 20000000
 #define EXAMPLE_PIN_NUM_MISO 5
 #define EXAMPLE_PIN_NUM_MOSI 6
 #define EXAMPLE_PIN_NUM_SCLK 7
@@ -24,6 +25,7 @@
 #define Offset_Y 0
 
 void LCD_Init(void);
+void LCD_ClearColor(uint16_t color);
 void LCD_SetCursor(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend);
 void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend, uint16_t *color);
 

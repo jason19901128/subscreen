@@ -119,6 +119,18 @@ void LCD_Init(void) {
   LCD_WriteCommand(0x11);
   delay(120);
   LCD_WriteCommand(0x29);
+  LCD_ClearColor(0x0000);
+}
+
+void LCD_ClearColor(uint16_t color) {
+  // Fill GRAM so the panel is not random snow before LVGL paints.
+  static uint16_t line[LCD_WIDTH];
+  for (uint16_t x = 0; x < LCD_WIDTH; ++x) {
+    line[x] = color;
+  }
+  for (uint16_t y = 0; y < LCD_HEIGHT; ++y) {
+    LCD_addWindow(0, y, LCD_WIDTH - 1, y, line);
+  }
 }
 
 void LCD_SetCursor(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend) {

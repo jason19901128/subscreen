@@ -21,10 +21,22 @@ struct CursorStatus {
   int planIncludedSpendCents = -1;
   int planRemainingCents = -1;
   int planPercentUsed = -1;
+  // Included-in-Team percents (match Cursor Settings UI).
+  int autoPercentUsed = -1;  // Cursor Models
+  int apiPercentUsed = -1;   // Other Models
+  // Usage-limits reset cycle (billingCycleStart → End).
+  int cycleDays = -1;
+  int cycleElapsedDays = -1;
+  int cycleRemainingDays = -1;
+  int cyclePercentUsed = -1;
   String onDemandError = "";
   bool bridgeReachable = false;
   bool bridgeOnline = false;
   bool cursorOnline = false;
+  // "wifi" | "usb" | "" — how the latest successful sample arrived.
+  String transport = "";
 };
 
+bool parseCursorStatusJson(const char *json, CursorStatus &out);
 bool fetchCursorStatus(CursorStatus &out);
+bool pollUsbCursorStatus(CursorStatus &out);

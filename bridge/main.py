@@ -11,14 +11,16 @@ from fastapi.responses import JSONResponse
 from context import ContextPoller
 from state import store
 from usage import UsagePoller
+from usb_link import UsbStatusPusher
 
 usage_poller: UsagePoller | None = None
 context_poller: ContextPoller | None = None
+usb_pusher: UsbStatusPusher | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global usage_poller, context_poller
+    global usage_poller, context_poller, usb_pusher
     usage_poller = UsagePoller(store.set_on_demand_usage)
     usage_poller.start()
     store.startup_sync_composer()
@@ -28,7 +30,12 @@ async def lifespan(_app: FastAPI):
         store.update_from_composer,
     )
     context_poller.start()
+    # Type-C fallback: push /status frames over USB serial when the screen is plugged in.
+    usb_pusher = UsbStatusPusher(store.snapshot)
+    usb_pusher.start()
     yield
+    if usb_pusher:
+        usb_pusher.stop()
     if context_poller:
         context_poller.stop()
     if usage_poller:

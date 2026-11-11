@@ -23,7 +23,7 @@ static const int BANNER_H = 50;
 static const int DETAIL_LINE_H = 20;
 static const int DETAIL_MAX_LINES = 4;
 static const int DETAIL_MAX_H = DETAIL_LINE_H * DETAIL_MAX_LINES;
-static const int FOOTER_METRICS_H = 78;
+static const int FOOTER_METRICS_H = 105;
 static const int FOOTER_LABEL_H = 20;
 static const int FOOTER_BAR_H = 5;
 static const int FOOTER_CTX_H = 20;
@@ -48,6 +48,8 @@ static lv_obj_t *lbl_status_edge;
 static lv_obj_t *panel_status_banner;
 static lv_obj_t *lbl_status_banner;
 static lv_obj_t *lbl_detail;
+static lv_obj_t *lbl_cycle;
+static lv_obj_t *bar_cycle;
 static lv_obj_t *bar_on_demand;
 static lv_obj_t *bar_od;
 static lv_obj_t *lbl_usage_plan;
@@ -118,17 +120,6 @@ static int tokenBarPercent(int tokens, int windowSize) {
   return static_cast<int>(pct);
 }
 
-static int usageBarPercent(int usedCents, int limitCents) {
-  if (limitCents <= 0 || usedCents < 0) {
-    return 0;
-  }
-  long pct = (static_cast<long>(usedCents) * 100L) / limitCents;
-  if (pct > 100) {
-    pct = 100;
-  }
-  return static_cast<int>(pct);
-}
-
 static void formatTokenCompact(int tokens, char *buf, size_t len) {
   if (tokens <= 0) {
     snprintf(buf, len, "0");
@@ -139,16 +130,6 @@ static void formatTokenCompact(int tokens, char *buf, size_t len) {
     return;
   }
   snprintf(buf, len, "%.1fK", static_cast<double>(tokens) / 1000.0);
-}
-
-static void formatUsdFromCents(char *buf, size_t len, int cents) {
-  const int dollars = cents / 100;
-  const int frac = cents >= 0 ? cents % 100 : (-cents) % 100;
-  if (frac == 0) {
-    snprintf(buf, len, "$%d", dollars);
-  } else {
-    snprintf(buf, len, "$%d.%02d", dollars, frac);
-  }
 }
 
 static int innerCornerRadius(void) {
@@ -305,7 +286,13 @@ static bool status_visual_changed(const CursorStatus &next, const CursorStatus &
          next.planLimitCents != prev.planLimitCents ||
          next.planIncludedSpendCents != prev.planIncludedSpendCents ||
          next.planRemainingCents != prev.planRemainingCents ||
-         next.planPercentUsed != prev.planPercentUsed;
+         next.planPercentUsed != prev.planPercentUsed ||
+         next.autoPercentUsed != prev.autoPercentUsed ||
+         next.apiPercentUsed != prev.apiPercentUsed ||
+         next.cycleDays != prev.cycleDays ||
+         next.cycleElapsedDays != prev.cycleElapsedDays ||
+         next.cycleRemainingDays != prev.cycleRemainingDays ||
+         next.cyclePercentUsed != prev.cyclePercentUsed;
 }
 
 static void style_sleep_arc_indicator(int remain_sec) {
@@ -499,9 +486,26 @@ void ui_init(void) {
   lv_obj_set_flex_align(footer_metrics, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(footer_metrics, 2, 0);
 
+  lbl_cycle = lv_label_create(footer_metrics);
+  lv_label_set_text(lbl_cycle, "Reset: --");
+  lv_obj_set_style_text_color(lbl_cycle, lv_color_hex(0xA5B4FC), 0);
+  lv_obj_set_style_text_font(lbl_cycle, FONT_BODY, 0);
+  lv_obj_set_size(lbl_cycle, LV_PCT(100), FOOTER_LABEL_H);
+  style_compact_label(lbl_cycle);
+  lv_label_set_long_mode(lbl_cycle, LV_LABEL_LONG_DOT);
+
+  bar_cycle = lv_bar_create(footer_metrics);
+  lv_obj_set_size(bar_cycle, LV_PCT(100), FOOTER_BAR_H);
+  lv_bar_set_range(bar_cycle, 0, 100);
+  lv_bar_set_value(bar_cycle, 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(bar_cycle, lv_color_hex(0x334155), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(bar_cycle, lv_color_hex(0x818CF8), LV_PART_INDICATOR);
+  lv_obj_set_style_radius(bar_cycle, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(bar_cycle, 1, LV_PART_INDICATOR);
+
   lbl_usage_plan = lv_label_create(footer_metrics);
-  lv_label_set_text(lbl_usage_plan, "Plan: --");
-  lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0xFDE68A), 0);
+  lv_label_set_text(lbl_usage_plan, "Models: --");
+  lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0x93C5FD), 0);
   lv_obj_set_style_text_font(lbl_usage_plan, FONT_BODY, 0);
   lv_obj_set_size(lbl_usage_plan, LV_PCT(100), FOOTER_LABEL_H);
   style_compact_label(lbl_usage_plan);
@@ -512,28 +516,26 @@ void ui_init(void) {
   lv_bar_set_range(bar_on_demand, 0, 100);
   lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0x334155), LV_PART_MAIN);
-  lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0xF59E0B), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0x3B82F6), LV_PART_INDICATOR);
   lv_obj_set_style_radius(bar_on_demand, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(bar_on_demand, 1, LV_PART_INDICATOR);
 
   lbl_usage_od = lv_label_create(footer_metrics);
-  lv_label_set_text(lbl_usage_od, "OD: --");
+  lv_label_set_text(lbl_usage_od, "Other: --");
   lv_obj_set_style_text_color(lbl_usage_od, lv_color_hex(0xCBD5E1), 0);
   lv_obj_set_style_text_font(lbl_usage_od, FONT_BODY, 0);
   lv_obj_set_size(lbl_usage_od, LV_PCT(100), FOOTER_LABEL_H);
   style_compact_label(lbl_usage_od);
   lv_label_set_long_mode(lbl_usage_od, LV_LABEL_LONG_DOT);
-  lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
 
   bar_od = lv_bar_create(footer_metrics);
   lv_obj_set_size(bar_od, LV_PCT(100), FOOTER_BAR_H);
   lv_bar_set_range(bar_od, 0, 100);
   lv_bar_set_value(bar_od, 0, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x334155), LV_PART_MAIN);
-  lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x38BDF8), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x64748B), LV_PART_INDICATOR);
   lv_obj_set_style_radius(bar_od, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(bar_od, 1, LV_PART_INDICATOR);
-  lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t *ctx_row = lv_obj_create(footer_metrics);
   lv_obj_set_size(ctx_row, LV_PCT(100), FOOTER_CTX_H);
@@ -562,120 +564,123 @@ void ui_init(void) {
   lv_obj_set_style_text_align(lbl_tokens, LV_TEXT_ALIGN_RIGHT, 0);
 }
 
+static void update_cycle_ui(const CursorStatus &status) {
+  // Full bar = billing cycle length; fill = elapsed days (= cycle - remaining).
+  if (status.cycleDays > 0 && status.cycleRemainingDays >= 0) {
+    int pct = status.cyclePercentUsed;
+    if (pct < 0) {
+      pct = (status.cycleElapsedDays * 100) / status.cycleDays;
+    }
+    if (pct > 100) {
+      pct = 100;
+    }
+
+    char line[28];
+    snprintf(line, sizeof(line), "Reset: %dd", status.cycleRemainingDays);
+    lv_color_t text = lv_color_hex(0xA5B4FC);
+    lv_color_t bar = lv_color_hex(0x818CF8);
+    if (status.cycleRemainingDays <= 3) {
+      text = lv_color_hex(0xFCA5A5);
+      bar = lv_color_hex(0xEF4444);
+    } else if (status.cycleRemainingDays <= 7) {
+      text = lv_color_hex(0xFDE68A);
+      bar = lv_color_hex(0xF59E0B);
+    }
+    lv_label_set_text(lbl_cycle, line);
+    lv_obj_set_style_text_color(lbl_cycle, text, 0);
+    lv_bar_set_value(bar_cycle, pct, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(bar_cycle, bar, LV_PART_INDICATOR);
+    return;
+  }
+
+  lv_label_set_text(lbl_cycle, "Reset: --");
+  lv_obj_set_style_text_color(lbl_cycle, lv_color_hex(0x94A3B8), 0);
+  lv_bar_set_value(bar_cycle, 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(bar_cycle, lv_color_hex(0x475569), LV_PART_INDICATOR);
+}
+
 static void update_on_demand_ui(const CursorStatus &status) {
-  lv_color_t plan_text = lv_color_hex(0xFDE68A);
-  lv_color_t plan_bar = lv_color_hex(0xF59E0B);
+  // Match Cursor Settings → Included in Team:
+  //   Models = autoPercentUsed (Cursor Models)
+  //   Other  = apiPercentUsed  (Other Models)
+  // Team OD pool ($5000) is a separate spend-limit metric and is not shown here.
+  update_cycle_ui(status);
 
   if (status.onDemandError.length() && status.onDemandError != "not_fetched") {
     lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
+    lv_bar_set_value(bar_od, 0, LV_ANIM_OFF);
     lv_label_set_text(lbl_usage_plan, "Usage unavailable");
+    lv_label_set_text(lbl_usage_od, "Other: --");
     lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0x94A3B8), 0);
+    lv_obj_set_style_text_color(lbl_usage_od, lv_color_hex(0x94A3B8), 0);
     lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0x475569), LV_PART_INDICATOR);
-    lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x475569), LV_PART_INDICATOR);
     return;
   }
 
-  const bool hasPlan = status.planLimitCents > 0;
-  const bool hasOd = status.onDemandLimitCents > 0;
+  const bool hasIncluded =
+      status.autoPercentUsed >= 0 || status.apiPercentUsed >= 0 || status.planLimitCents > 0;
 
-  if (!status.onDemandEnabled && !hasPlan && status.onDemandUsedCents < 0 &&
+  if (!status.onDemandEnabled && !hasIncluded && status.onDemandUsedCents < 0 &&
       status.onDemandLimitCents < 0) {
     lv_bar_set_value(bar_on_demand, 0, LV_ANIM_OFF);
+    lv_bar_set_value(bar_od, 0, LV_ANIM_OFF);
     lv_label_set_text(lbl_usage_plan, "Loading usage...");
+    lv_label_set_text(lbl_usage_od, "Other: --");
     lv_obj_set_style_text_color(lbl_usage_plan, lv_color_hex(0x94A3B8), 0);
-    lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0xF59E0B), LV_PART_INDICATOR);
-    lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_color(lbl_usage_od, lv_color_hex(0x94A3B8), 0);
+    lv_obj_set_style_bg_color(bar_on_demand, lv_color_hex(0x3B82F6), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar_od, lv_color_hex(0x64748B), LV_PART_INDICATOR);
     return;
   }
 
-  char planLine[40] = "";
-  char odLine[40] = "";
-  int planBarPct = 0;
-  int odBarPct = 0;
-  bool showOd = false;
-  bool showOdBar = false;
-
-  if (hasPlan) {
-    int planUsed = status.planIncludedSpendCents >= 0 ? status.planIncludedSpendCents : 0;
-    if (planUsed <= 0 && status.planLimitCents > 0 && status.planRemainingCents >= 0) {
-      planUsed = status.planLimitCents - status.planRemainingCents;
-      if (planUsed < 0) {
-        planUsed = 0;
-      }
-    }
-    char used[16];
-    char limit[16];
-    formatUsdFromCents(used, sizeof(used), planUsed);
-    formatUsdFromCents(limit, sizeof(limit), status.planLimitCents);
-    snprintf(planLine, sizeof(planLine), "Plan: %s / %s", used, limit);
-    planBarPct = usageBarPercent(planUsed, status.planLimitCents);
+  int modelsPct = status.autoPercentUsed >= 0 ? status.autoPercentUsed : 0;
+  int otherPct = status.apiPercentUsed >= 0 ? status.apiPercentUsed : 0;
+  if (modelsPct > 100) {
+    modelsPct = 100;
+  }
+  if (otherPct > 100) {
+    otherPct = 100;
   }
 
-  if (hasOd || status.onDemandUsedCents >= 0) {
-    int usedCents = status.onDemandUsedCents;
-    const int limitCents = status.onDemandLimitCents;
-    if (usedCents < 0 && limitCents > 0 && status.onDemandRemainingCents >= 0) {
-      usedCents = limitCents - status.onDemandRemainingCents;
-      if (usedCents < 0) {
-        usedCents = 0;
-      }
-    }
-    if (status.onDemandUnlimited || limitCents <= 0) {
-      if (usedCents >= 0) {
-        char usd[16];
-        formatUsdFromCents(usd, sizeof(usd), usedCents);
-        snprintf(odLine, sizeof(odLine), "OD: %s used", usd);
-      } else {
-        snprintf(odLine, sizeof(odLine), "OD: unlimited");
-      }
-    } else {
-      char used[16];
-      char limit[16];
-      formatUsdFromCents(used, sizeof(used), usedCents >= 0 ? usedCents : 0);
-      formatUsdFromCents(limit, sizeof(limit), limitCents);
-      snprintf(odLine, sizeof(odLine), "OD: %s / %s", used, limit);
-      odBarPct = usageBarPercent(usedCents >= 0 ? usedCents : 0, limitCents);
-      showOdBar = true;
-    }
-    showOd = true;
-  }
-
-  if (planLine[0] == '\0' && !showOd) {
-    snprintf(planLine, sizeof(planLine), "Usage: --");
-  } else if (planLine[0] == '\0' && showOd) {
-    snprintf(planLine, sizeof(planLine), "Plan: n/a");
-  }
-
-  if (planBarPct >= 80) {
-    plan_text = lv_color_hex(0xFCA5A5);
-    plan_bar = lv_color_hex(0xEF4444);
-  }
-
-  lv_bar_set_value(bar_on_demand, planBarPct, LV_ANIM_OFF);
-  lv_label_set_text(lbl_usage_plan, planLine);
-  lv_obj_set_style_text_color(lbl_usage_plan, plan_text, 0);
-  lv_obj_set_style_bg_color(bar_on_demand, plan_bar, LV_PART_INDICATOR);
-
-  if (showOd) {
-    lv_label_set_text(lbl_usage_od, odLine);
-    lv_obj_remove_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
-    if (showOdBar) {
-      lv_color_t od_bar = lv_color_hex(0x38BDF8);
-      if (odBarPct >= 80) {
-        od_bar = lv_color_hex(0xEF4444);
-      }
-      lv_bar_set_value(bar_od, odBarPct, LV_ANIM_OFF);
-      lv_obj_set_style_bg_color(bar_od, od_bar, LV_PART_INDICATOR);
-      lv_obj_remove_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
-    }
+  char modelsLine[24];
+  char otherLine[24];
+  if (status.autoPercentUsed >= 0) {
+    snprintf(modelsLine, sizeof(modelsLine), "Models: %d%%", modelsPct);
   } else {
-    lv_obj_add_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
+    snprintf(modelsLine, sizeof(modelsLine), "Models: --");
   }
+  if (status.apiPercentUsed >= 0) {
+    snprintf(otherLine, sizeof(otherLine), "Other: %d%%", otherPct);
+  } else {
+    snprintf(otherLine, sizeof(otherLine), "Other: --");
+  }
+
+  lv_color_t models_text = lv_color_hex(0x93C5FD);
+  lv_color_t models_bar = lv_color_hex(0x3B82F6);
+  if (modelsPct >= 80) {
+    models_text = lv_color_hex(0xFCA5A5);
+    models_bar = lv_color_hex(0xEF4444);
+  }
+
+  lv_color_t other_text = lv_color_hex(0xCBD5E1);
+  lv_color_t other_bar = lv_color_hex(0x64748B);
+  if (otherPct >= 80) {
+    other_text = lv_color_hex(0xFCA5A5);
+    other_bar = lv_color_hex(0xEF4444);
+  }
+
+  lv_label_set_text(lbl_usage_plan, modelsLine);
+  lv_obj_set_style_text_color(lbl_usage_plan, models_text, 0);
+  lv_bar_set_value(bar_on_demand, status.autoPercentUsed >= 0 ? modelsPct : 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(bar_on_demand, models_bar, LV_PART_INDICATOR);
+
+  lv_label_set_text(lbl_usage_od, otherLine);
+  lv_obj_set_style_text_color(lbl_usage_od, other_text, 0);
+  lv_obj_remove_flag(lbl_usage_od, LV_OBJ_FLAG_HIDDEN);
+  lv_bar_set_value(bar_od, status.apiPercentUsed >= 0 ? otherPct : 0, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(bar_od, other_bar, LV_PART_INDICATOR);
+  lv_obj_remove_flag(bar_od, LV_OBJ_FLAG_HIDDEN);
 }
 
 void ui_update(const CursorStatus &status) {

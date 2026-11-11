@@ -15,7 +15,8 @@ chmod +x "$HOOKS_DST"
 echo "==> Installing bridge into ~/.cursor/subscreen/bridge"
 rm -rf "$BRIDGE_DST"
 mkdir -p "$BRIDGE_DST"
-cp "$ROOT/bridge/main.py" "$ROOT/bridge/state.py" "$ROOT/bridge/usage.py" "$ROOT/bridge/context.py" "$ROOT/bridge/requirements.txt" "$BRIDGE_DST/"
+cp "$ROOT/bridge/main.py" "$ROOT/bridge/state.py" "$ROOT/bridge/usage.py" "$ROOT/bridge/context.py" \
+   "$ROOT/bridge/usb_link.py" "$ROOT/bridge/requirements.txt" "$BRIDGE_DST/"
 
 echo "==> Installing Python bridge dependencies"
 python3 -m pip install --user -r "$BRIDGE_DST/requirements.txt"

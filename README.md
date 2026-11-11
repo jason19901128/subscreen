@@ -6,7 +6,8 @@
 
 ```text
 Cursor Hooks ──► Bridge (FastAPI :8765) ◄── WiFi 轮询 ── ESP32 固件 (LVGL)
-                      │
+                      │                         ▲
+                      │                         └── Type-C USB 串口推送（无 WiFi 时）
                       ├── state.json（Hook 状态机）
                       ├── state.vscdb（Context / Review blocking，1s）
                       └── Cursor 账户 API（On-Demand，5min）
@@ -14,9 +15,11 @@ Cursor Hooks ──► Bridge (FastAPI :8765) ◄── WiFi 轮询 ── ESP32
 
 | 组件 | 职责 |
 |------|------|
-| **Mac Bridge** | 接收 Hooks，维护 `agent_status` / 确认态，提供 `GET /status` |
+| **Mac Bridge** | 接收 Hooks，维护 `agent_status` / 确认态，提供 `GET /status`；USB 已连接时通过串口推送状态 |
 | **Cursor Hooks** | Agent 生命周期事件（`~/.cursor/hooks.json`） |
-| **ESP32 固件** | 轮询 Bridge，映射为 THINKING / TOOL / CONFIRM / IDLE / OFFLINE 等 UI |
+| **ESP32 固件** | 优先收 USB 状态帧，否则 WiFi 轮询 Bridge；映射为 THINKING / TOOL / CONFIRM / IDLE / OFFLINE 等 UI |
+
+无 WiFi 时：用 Type-C 把副屏连到 Mac，Bridge 会自动发现 `/dev/cu.usbmodem*` 并推送状态（烧录脚本会自动暂停占用）。有 WiFi 时仍优先走 HTTP，USB 仅作兜底，避免串口刷屏导致闪烁。
 
 ## 快速开始
 

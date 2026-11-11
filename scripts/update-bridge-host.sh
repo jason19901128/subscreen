@@ -117,6 +117,15 @@ if [[ -z "$PIO_CMD" ]]; then
 fi
 
 echo "Uploading firmware..."
+PAUSE_FLAG="$HOME/.cursor/subscreen/usb_pause"
+mkdir -p "$(dirname "$PAUSE_FLAG")"
+# Release USB serial held by Bridge so esptool can flash.
+touch "$PAUSE_FLAG"
+cleanup_pause() { rm -f "$PAUSE_FLAG"; }
+trap cleanup_pause EXIT
+sleep 2
 # shellcheck disable=SC2086
 $PIO_CMD run -t upload -d "$ROOT/firmware"
+cleanup_pause
+trap - EXIT
 echo "Done. If the screen still shows OFFLINE, press RESET once."
